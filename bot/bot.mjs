@@ -181,6 +181,19 @@ let cola = Promise.resolve();
 // --personal: conectado a TU número, solo responde en tu chat "Mensajes para mí"
 const PERSONAL = process.argv.includes('--personal');
 const enviados = new Set();
+// Mensaje de "es gratis" después del sticker (una vez por día por persona).
+// Cuando tengas Cafecito, poné tu link en CAFECITO.
+const CAFECITO = process.env.CAFECITO || '';
+const avisados = new Map();
+async function avisoGratis(sock, jid) {
+  const ahora = Date.now();
+  if (ahora - (avisados.get(jid) || 0) < 24 * 60 * 60 * 1000) return;
+  avisados.set(jid, ahora);
+  let t = '🎁 Esto es *gratis*: no se cobra nada, ni ahora ni después.';
+  if (CAFECITO) t += `\n☕ Si te gustó y querés bancar el proyecto, podés invitarnos un cafecito: ${CAFECITO}`;
+  t += '\n\nTocá el sticker y marcalo como ⭐ favorito para usarlo cuando quieras.';
+  await sock.sendMessage(jid, { text: t });
+}
 // --numero 54911XXXXXXXX: vincular con código de 8 letras en vez de QR
 const NUMERO = (process.argv[process.argv.indexOf('--numero') + 1] || '').replace(/\D/g, '') || (process.argv.includes('--numero') ? '' : '');
 let pidioCodigo = false;
@@ -241,6 +254,7 @@ async function atender(sock, m) {
     if (!p.res) { await sock.sendMessage(jid, { text: 'Ese sticker no se pudo armar 😕. Probá de nuevo desde la página.' }); return; }
     await enviarSticker(sock, jid, p.res, m);
     p.estado = 'enviado';
+    await avisoGratis(sock, jid);
     log(`→ pedido ${cod} enviado`);
     return;
   }
@@ -257,6 +271,7 @@ async function atender(sock, m) {
     log(`→ ${jid.split('@')[0]}: ${video ? 'video' : link} desde=${opciones.desde} dura=${opciones.dura} audio=${opciones.conAudio}`);
     const res = await convertir(entrada, opciones);
     const conSonido = await enviarSticker(sock, jid, res, m);
+    await avisoGratis(sock, jid);
     if (opciones.conAudio && !conSonido) await sock.sendMessage(jid, { text: 'Ese video no tiene sonido, así que va sin audio.' });
     await sock.sendMessage(jid, { react: { text: '✅', key: m.key } });
     log(`  listo (${(res.webp.length / 1024).toFixed(0)} KB${res.ogg ? ' + audio' : ''})`);
