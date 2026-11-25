@@ -266,6 +266,10 @@
   .editar .sub { margin: 14px 0 8px; }
   .editar .row { margin-top: 8px; }
   .mas { margin-top: 14px; }
+  .aviso { text-align: left; margin: 0 auto 16px; max-width: 480px; background: rgba(16, 185, 129, .07); border: 1px solid rgba(16, 185, 129, .25); border-radius: 14px; padding: 0 14px; }
+  .aviso summary { cursor: pointer; padding: 11px 0; font-weight: 700; font-size: 14px; color: var(--emerald-ink); margin: 0; }
+  .aviso p { margin: 0 0 10px; font-size: 13.5px; color: #D4D4D8; line-height: 1.5; }
+  .aviso .chico { font-size: 12.5px; color: var(--muted); }
   .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
   .seg button { border: 0; background: none; border-radius: 9px; padding: 9px; font-weight: 700; font-size: 14px; color: var(--muted); }
   .seg button.on { background: #27272A; color: var(--ink); }
@@ -302,6 +306,13 @@
   <section class="hero" id="paso1">
     <h1>Hacé un sticker con sonido</h1>
     <p>Pegá el link de un video de <b>X</b> o <b>TikTok</b> y listo.</p>
+    <details class="aviso">
+      <summary>🔊 ¿Mi WhatsApp puede hacer stickers con sonido?</summary>
+      <p>WhatsApp empezó a activar los stickers con sonido el 24 de noviembre de 2026, <b>de a poco</b>, en Android y iPhone. Todavía no le llegó a todo el mundo y no hay fecha para que llegue a todos.</p>
+      <p><b>Cómo saber si lo tenés:</b> en un chat, tocá stickers → <b>Crear</b> → elegí un video. Si arriba aparece el botón <b>🔊</b>, ya lo tenés.</p>
+      <p><b>Si no te aparece:</b> el video igual sirve para un sticker animado <b>sin sonido</b>, y le vas a poder poner sonido cuando WhatsApp te active la función. Recibir y reenviar stickers con sonido sí lo puede hacer casi todo el mundo.</p>
+      <p class="chico">Esta página prepara el video: lo trae, lo recorta a 5 segundos y lo deja listo. El sticker con sonido lo crea WhatsApp; ninguna página lo puede crear por su cuenta.</p>
+    </details>
     <form class="pegar" id="formLink">
       <input type="url" id="linkInput" placeholder="Pegá el link acá" inputmode="url" autocomplete="off" enterkeyhint="go">
       <button type="submit" id="btnTraer">Traer video</button>
@@ -1511,6 +1522,7 @@ const PASOS_WA = [
   '2️⃣ En WhatsApp abrí un chat → <b>😊</b> → pestaña de stickers → <b>➕ Crear</b>',
   '3️⃣ Elegí el video que guardaste',
   '4️⃣ Tocá <b>🔊</b> y dejá el <b>sonido original</b>. ¡Mandalo! 🗿',
+  '¿No ves el botón 🔊? WhatsApp todavía no te activó los stickers con sonido (llega de a poco). Igual podés guardarlo como sticker animado sin sonido.',
 ];
 let tutorialMostrado = false;
 function mostrarTutorial() {
