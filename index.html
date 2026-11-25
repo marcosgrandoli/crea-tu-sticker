@@ -383,6 +383,8 @@
       <div class="seg" id="segAudio"><button type="button" data-a="1" class="on">🔊 Con audio</button><button type="button" data-a="0">🔇 Sin audio</button></div>
     </div>
     
+    <button class="big" id="btnBot" type="button" hidden>🔊 Crear con sonido en WhatsApp</button>
+    <p class="hint" id="hintBot" hidden>Se abre WhatsApp con el pedido listo: tocá enviar y te llega el sticker con sonido.</p>
     <button class="big" id="btnCrear" type="button">✨ Crear sticker</button>
     <div class="bar" id="bar" hidden><div></div></div>
     <p class="hint" id="estado"></p>
@@ -493,6 +495,11 @@ const CONFIG = {
   COBALT_API: '',
   COBALT_KEY: '',
 
+  // Número de WhatsApp del bot (con código de país, sin + ni espacios).
+  // Vacío = no aparece el botón. Para probar sin publicarlo: agregá
+  // ?bot=549XXXXXXXXXX al final del link de la página.
+  BOT_NUMERO: '',
+
   // Segundos máximos del sticker (WhatsApp guarda hasta 5 s de audio)
   DURACION_MAX: 5,
 
@@ -588,7 +595,7 @@ function limpiarVisual() {
   if (v.type === 'video') { v.el.pause(); v.el.remove(); }
   if (v.type === 'image' && v.el.remove) v.el.remove();
   if (v.type === 'frames') v.frames.forEach(f => f.bmp.close && f.bmp.close());
-  S.visual = null; ponerZoom(1); S.panX = S.panY = 0;
+  S.visual = null; S.link = null; ponerZoom(1); S.panX = S.panY = 0;
 }
 
 // Archivo de imagen / GIF / video. Si es video, su audio pasa a la botonera.
@@ -831,6 +838,7 @@ async function traerDesdeLink(k, link) {
     const blob = await r.blob();
     if (blob.size > 80e6) throw new Error('Ese video es muy pesado. Probá con uno más corto.');
     await cargarArchivo(new File([blob], 'video.mp4', { type: blob.type || 'video/mp4' }), opts);
+    S.link = link; actualizarBotonBot();   // el bot puede bajar este mismo link
   } else if (imagenUrl) {
     const img = await (await fetch(imagenUrl, { referrerPolicy: 'no-referrer' })).blob();
     await cargarArchivo(new File([img], 'foto.jpg', { type: img.type || 'image/jpeg' }));
@@ -1164,7 +1172,20 @@ function actualizarRecorte() {
   $('#segAudio').hidden = !S.audio;
   actualizarBadge(); dibujarOnda();
 }
-function actualizarBadge() { $('#durLabel').textContent = S.audio && S.conAudio ? S.dur.toFixed(1) + 's' : 'sin audio'; }
+function actualizarBadge() { $('#durLabel').textContent = S.audio && S.conAudio ? S.dur.toFixed(1) + 's' : 'sin audio'; actualizarBotonBot(); }
+
+// ---------- Bot de WhatsApp: abre el chat con el pedido escrito ----------
+const BOT = (new URLSearchParams(location.search).get('bot') || CONFIG.BOT_NUMERO || '').replace(/\D/g, '');
+function actualizarBotonBot() {
+  const ok = !!BOT && !!S.link;
+  $('#btnBot').hidden = !ok; $('#hintBot').hidden = !ok;
+}
+function textoParaBot() {
+  return `${S.link} desde ${S.start.toFixed(1)}s dura ${S.dur.toFixed(1)}s${S.conAudio ? '' : ' sin audio'}`;
+}
+$('#btnBot').addEventListener('click', () => {
+  location.href = `https://wa.me/${BOT}?text=${encodeURIComponent(textoParaBot())}`;
+});
 $('#rDur').addEventListener('input', e => { S.dur = +e.target.value; actualizarRecorte(); });
 $('#rDur').addEventListener('change', reproducir);
 $('#rInicio').addEventListener('input', e => { S.start = +e.target.value; actualizarRecorte(); });
