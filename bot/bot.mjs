@@ -233,6 +233,17 @@ async function atender(sock, m) {
   const msg = m.message;
   const texto = msg.conversation || msg.extendedTextMessage?.text || msg.videoMessage?.caption || '';
   const video = msg.videoMessage;
+  // Pedido que armó la página: "🔊 Quiero mi sticker: K7F2"
+  const cod = (texto.match(/sticker\W*([A-Z0-9]{4})\b/i) || [])[1]?.toUpperCase();
+  if (cod && pedidos.has(cod)) {
+    const p = pedidos.get(cod);
+    if (p.estado !== 'listo' && p.estado !== 'enviado') { await sock.sendMessage(jid, { text: 'Todavía lo estoy armando, ya te llega ⏳' }); await p.promesa?.catch(() => {}); }
+    if (!p.res) { await sock.sendMessage(jid, { text: 'Ese sticker no se pudo armar 😕. Probá de nuevo desde la página.' }); return; }
+    await enviarSticker(sock, jid, p.res, m);
+    p.estado = 'enviado';
+    log(`→ pedido ${cod} enviado`);
+    return;
+  }
   const link = (texto.match(/https?:\/\/\S*(x\.com|twitter\.com|fxtwitter\.com|vxtwitter\.com|tiktok\.com)\S*/i) || [])[0];
   if (!video && !link) { if (!PERSONAL) await sock.sendMessage(jid, { text: AYUDA }); return; }
 
@@ -256,6 +267,70 @@ async function atender(sock, m) {
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
+// ---------------------------------------------------------------------
+// 6) "Puerta" para la página: la página pide el sticker por detrás,
+//    el bot lo arma y le da un código. La persona manda el código por
+//    WhatsApp (un toque) y el bot le responde con el sticker ya hecho.
+//    POST /pedido {link, desde, dura, conAudio}  → {codigo}
+//    GET  /pedido/K7F2                            → {estado}
+//    GET  /pedido/K7F2/sticker.webp | audio.ogg   → archivos para la vista previa
+// ---------------------------------------------------------------------
+const pedidos = new Map();
+const PUERTO = Number(process.env.PUERTO || 8787);
+const LETRAS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function nuevoCodigo() {
+  let c; do { c = Array.from({ length: 4 }, () => LETRAS[Math.floor(Math.random() * LETRAS.length)]).join(''); } while (pedidos.has(c));
+  return c;
+}
+setInterval(() => { const lim = Date.now() - 60 * 60 * 1000; for (const [c, p] of pedidos) if (p.creado < lim) pedidos.delete(c); }, 5 * 60 * 1000);
+
+async function armarPedido(p, { link, desde, dura, conAudio }) {
+  const dir = await mkdtemp(join(tmpdir(), 'cts-api-'));
+  try {
+    const f = join(dir, 'in.mp4'); await writeFile(f, await bajarVideo(link));
+    p.res = await convertir(f, { desde, dura, conAudio });
+    p.estado = 'listo';
+    log(`  pedido ${p.codigo} listo (${(p.res.webp.length / 1024).toFixed(0)} KB${p.res.ogg ? ' + audio' : ''})`);
+  } catch (e) { p.estado = 'error'; p.error = e.message; log(`  pedido ${p.codigo} error: ${e.message}`); }
+  finally { await rm(dir, { recursive: true, force: true }); }
+}
+
+async function iniciarApi() {
+  const http = await import('node:http');
+  const cors = {
+    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Private-Network': 'true',
+  };
+  const json = (res, code, obj) => { res.writeHead(code, { ...cors, 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  http.createServer(async (req, res) => {
+    try {
+      if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+      const url = new URL(req.url, 'http://x');
+      if (req.method === 'POST' && url.pathname === '/pedido') {
+        let body = ''; for await (const ch of req) { body += ch; if (body.length > 10000) return json(res, 413, { error: 'muy grande' }); }
+        const d = JSON.parse(body || '{}');
+        if (!/^https?:\/\/\S*(x\.com|twitter\.com|fxtwitter\.com|vxtwitter\.com|tiktok\.com)/i.test(d.link || '')) return json(res, 400, { error: 'Solo links de X o TikTok' });
+        const p = { codigo: nuevoCodigo(), estado: 'armando', creado: Date.now() };
+        pedidos.set(p.codigo, p);
+        log(`→ pedido ${p.codigo} desde la página: ${d.link} desde=${d.desde} dura=${d.dura} audio=${d.conAudio !== false}`);
+        p.promesa = armarPedido(p, { link: d.link, desde: +d.desde || 0, dura: Math.min(+d.dura || MAX_SEG, MAX_SEG), conAudio: d.conAudio !== false });
+        return json(res, 200, { codigo: p.codigo });
+      }
+      const m = url.pathname.match(/^\/pedido\/([A-Z0-9]{4})(\/(sticker\.webp|audio\.ogg))?$/);
+      if (req.method === 'GET' && m) {
+        const p = pedidos.get(m[1]); if (!p) return json(res, 404, { error: 'No existe' });
+        if (!m[3]) return json(res, 200, { estado: p.estado, error: p.error, conAudio: !!p.res?.ogg });
+        const buf = m[3] === 'sticker.webp' ? p.res?.webp : p.res?.ogg;
+        if (!buf) return json(res, 404, { error: 'Todavía no' });
+        res.writeHead(200, { ...cors, 'Content-Type': m[3] === 'sticker.webp' ? 'image/webp' : 'audio/ogg', 'Cache-Control': 'no-store' });
+        return res.end(buf);
+      }
+      if (url.pathname === '/') return json(res, 200, { ok: true, bot: 'Creá tu sticker' });
+      json(res, 404, { error: 'No existe' });
+    } catch (e) { json(res, 500, { error: e.message }); }
+  }).listen(PUERTO, () => log(`🌐 Puerta para la página en http://localhost:${PUERTO}`));
+}
+
 // Modo prueba sin WhatsApp:  node bot.mjs --probar <link>
 if (process.argv[2] === '--probar') {
   const dir = await mkdtemp(join(tmpdir(), 'cts-p-'));
@@ -275,4 +350,5 @@ if (process.argv[2] === '--probar') {
   await rm(dir, { recursive: true, force: true });
 } else {
   iniciar();
+  iniciarApi();
 }
