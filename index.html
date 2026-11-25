@@ -266,6 +266,12 @@
   .editar .sub { margin: 14px 0 8px; }
   .editar .row { margin-top: 8px; }
   .mas { margin-top: 14px; }
+  .bot-res { margin-top: 14px; padding: 14px; border-radius: 16px; background: rgba(16, 185, 129, .07); border: 1px solid rgba(16, 185, 129, .25); }
+  .bot-fila { display: flex; gap: 14px; align-items: center; }
+  .bot-fila img { width: 110px; height: 110px; border-radius: 12px; background: var(--wa-chat); object-fit: contain; flex: none; }
+  .bot-fila img:not([src]) { visibility: hidden; }
+  .bot-fila b { display: block; font-size: 15px; margin-bottom: 8px; }
+  .bot-res a.big { display: block; text-align: center; text-decoration: none; margin-top: 12px; }
   .aviso { text-align: left; margin: 0 auto 16px; max-width: 480px; background: rgba(16, 185, 129, .07); border: 1px solid rgba(16, 185, 129, .25); border-radius: 14px; padding: 0 14px; }
   .aviso summary { cursor: pointer; padding: 11px 0; font-weight: 700; font-size: 14px; color: var(--emerald-ink); margin: 0; }
   .aviso p { margin: 0 0 10px; font-size: 13.5px; color: #D4D4D8; line-height: 1.5; }
@@ -383,8 +389,19 @@
       <div class="seg" id="segAudio"><button type="button" data-a="1" class="on">🔊 Con audio</button><button type="button" data-a="0">🔇 Sin audio</button></div>
     </div>
     
-    <button class="big" id="btnBot" type="button" hidden>🔊 Crear con sonido en WhatsApp</button>
-    <p class="hint" id="hintBot" hidden>Se abre WhatsApp con el pedido listo: tocá enviar y te llega el sticker con sonido.</p>
+    <button class="big" id="btnBot" type="button" hidden>🔊 Crear sticker con sonido</button>
+    <p class="hint" id="hintBot" hidden>Lo armamos acá y te lo mandamos a WhatsApp.</p>
+    <div class="bot-res" id="botRes" hidden>
+      <div class="bot-fila">
+        <img id="botImg" alt="Tu sticker con sonido">
+        <div>
+          <b id="botTit">Armando tu sticker…</b>
+          <button class="btn" id="botPlay" type="button" hidden>▶️ Escuchar</button>
+        </div>
+      </div>
+      <a class="big" id="botWA" target="_blank" rel="noopener" hidden>📲 Recibir en WhatsApp</a>
+      <p class="hint" id="botEstado"></p>
+    </div>
     <button class="big" id="btnCrear" type="button">✨ Crear sticker</button>
     <div class="bar" id="bar" hidden><div></div></div>
     <p class="hint" id="estado"></p>
@@ -499,6 +516,9 @@ const CONFIG = {
   // Vacío = no aparece el botón. Para probar sin publicarlo: agregá
   // ?bot=549XXXXXXXXXX al final del link de la página.
   BOT_NUMERO: '',
+  // Dirección del bot para pedirle el sticker por detrás (ej: https://bot.tudominio.com).
+  // Para probar: ?api=http://localhost:8787 en el link de la página.
+  BOT_API: '',
 
   // Segundos máximos del sticker (WhatsApp guarda hasta 5 s de audio)
   DURACION_MAX: 5,
@@ -1179,13 +1199,67 @@ const BOT = (new URLSearchParams(location.search).get('bot') || CONFIG.BOT_NUMER
 function actualizarBotonBot() {
   const ok = !!BOT && !!S.link;
   $('#btnBot').hidden = !ok; $('#hintBot').hidden = !ok;
+  $('#btnCrear').hidden = ok && !!BOT_API;      // con el bot, el botón viejo sobra
+}
+if (BOT && (new URLSearchParams(location.search).get('api') || CONFIG.BOT_API)) {
+  document.querySelector('footer').textContent = 'Creá tu sticker · El video se procesa para armar tu sticker y se borra a la hora.';
 }
 function textoParaBot() {
   return `${S.link} desde ${S.start.toFixed(1)}s dura ${S.dur.toFixed(1)}s${S.conAudio ? '' : ' sin audio'}`;
 }
-$('#btnBot').addEventListener('click', () => {
-  location.href = `https://wa.me/${BOT}?text=${encodeURIComponent(textoParaBot())}`;
+const BOT_API = (new URLSearchParams(location.search).get('api') || CONFIG.BOT_API || '').replace(/\/+$/, '');
+let pedidoActual = null, audioBot = null;
+$('#btnBot').addEventListener('click', async () => {
+  if (!BOT_API) { location.href = `https://wa.me/${BOT}?text=${encodeURIComponent(textoParaBot())}`; return; }
+  // 1) Se lo pedimos al bot por detrás
+  const btn = $('#btnBot'); btn.disabled = true; btn.textContent = '⏳ Armando tu sticker…';
+  $('#botRes').hidden = false; $('#botWA').hidden = true; $('#botPlay').hidden = true;
+  $('#botImg').removeAttribute('src'); $('#botTit').textContent = 'Armando tu sticker…'; $('#botEstado').textContent = '';
+  try {
+    const r = await fetch(`${BOT_API}/pedido`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ link: S.link, desde: +S.start.toFixed(2), dura: +S.dur.toFixed(2), conAudio: S.conAudio }) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'error');
+    pedidoActual = j.codigo;
+    // 2) Esperamos a que esté listo
+    let e;
+    for (let i = 0; i < 60; i++) {
+      e = await (await fetch(`${BOT_API}/pedido/${pedidoActual}`)).json();
+      if (e.estado === 'listo' || e.estado === 'error') break;
+      await new Promise(res => setTimeout(res, 1000));
+    }
+    if (e.estado !== 'listo') throw new Error(e.error || 'tardó demasiado');
+    // 3) Lo mostramos y abrimos WhatsApp con el código
+    $('#botImg').src = `${BOT_API}/pedido/${pedidoActual}/sticker.webp`;
+    $('#botTit').textContent = e.conAudio ? '¡Tu sticker con sonido está listo!' : '¡Tu sticker está listo! (sin sonido)';
+    $('#botPlay').hidden = !e.conAudio;
+    const wa = $('#botWA'); wa.hidden = false;
+    wa.href = `https://wa.me/${BOT}?text=${encodeURIComponent('🔊 Quiero mi sticker: ' + pedidoActual)}`;
+    $('#botEstado').textContent = 'Tocá el botón y después "enviar" en WhatsApp. Te llega al instante.';
+    esperarEnvio(pedidoActual);
+  } catch (err) {
+    $('#botTit').textContent = 'No se pudo armar 😕';
+    $('#botEstado').textContent = `${err.message}. Probá de nuevo en un rato.`;
+  }
+  btn.disabled = false; btn.textContent = '🔊 Crear otro con sonido';
 });
+$('#botPlay').addEventListener('click', () => {
+  // Escuchar en la página: el audio que armó el bot (si el navegador no lo reproduce, usamos el de la vista previa)
+  try { audioBot?.pause(); audioBot = new Audio(`${BOT_API}/pedido/${pedidoActual}/audio.ogg`); audioBot.play().catch(() => reproducir()); }
+  catch { reproducir(); }
+});
+async function esperarEnvio(cod) {
+  for (let i = 0; i < 300 && cod === pedidoActual; i++) {
+    await new Promise(res => setTimeout(res, 2000));
+    try {
+      const e = await (await fetch(`${BOT_API}/pedido/${cod}`)).json();
+      if (e.estado === 'enviado') {
+        $('#botTit').textContent = '✅ ¡Ya está en tu WhatsApp!';
+        $('#botEstado').textContent = 'Tocalo en el chat y marcalo como favorito para usarlo cuando quieras.';
+        $('#botWA').hidden = true; return;
+      }
+    } catch { /* seguimos esperando */ }
+  }
+}
 $('#rDur').addEventListener('input', e => { S.dur = +e.target.value; actualizarRecorte(); });
 $('#rDur').addEventListener('change', reproducir);
 $('#rInicio').addEventListener('input', e => { S.start = +e.target.value; actualizarRecorte(); });
