@@ -266,6 +266,10 @@
   .editar .sub { margin: 14px 0 8px; }
   .editar .row { margin-top: 8px; }
   .mas { margin-top: 14px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+  .seg button { border: 0; background: none; border-radius: 9px; padding: 9px; font-weight: 700; font-size: 14px; color: var(--muted); }
+  .seg button.on { background: #27272A; color: var(--ink); }
+  #paso4 .ctrl { grid-template-columns: 70px 1fr 48px; }
   #paso4 .row .btn { flex: 1; }
   .btn.on { border-color: var(--emerald); color: var(--emerald-ink); background: rgba(16, 185, 129, .1); }
   .mas .opts { margin-top: 12px; }
@@ -364,15 +368,13 @@
     </div>
 
     <div class="trim" id="trim" hidden>
-      <div class="trim-top"><span>Elegí la parte (tocá la onda)</span><output id="oDur">3.0 s</output></div>
+      <div class="trim-top"><span>Qué parte del video</span><output id="oRango">0.0 – 3.0 s</output></div>
       <canvas class="wave" id="wave" width="1000" height="150"></canvas>
-      <input type="range" id="rDur" min="0.5" max="5" step="0.1" value="3" aria-label="Duración">
+      <div class="ctrl" id="filaInicio"><span>Desde</span><input type="range" id="rInicio" min="0" max="1" step="0.05" value="0"><output id="oInicio">0.0 s</output></div>
+      <div class="ctrl"><span>Duración</span><input type="range" id="rDur" min="0.5" max="5" step="0.1" value="3"><output id="oDur">3.0 s</output></div>
+      <div class="seg" id="segAudio"><button type="button" data-a="1" class="on">🔊 Con audio</button><button type="button" data-a="0">🔇 Sin audio</button></div>
     </div>
-
-    <div class="row" style="margin-top:12px">
-      <button class="btn" id="btnRandom" type="button">🎲 Random</button>
-      <button class="btn" id="btnFrito" type="button">🍟 Frito</button>
-    </div>
+    
     <button class="big" id="btnCrear" type="button">✨ Crear sticker</button>
     <div class="bar" id="bar" hidden><div></div></div>
     <p class="hint" id="estado"></p>
@@ -387,7 +389,8 @@
     <div class="note" id="pasoWA" hidden>En WhatsApp: abrí un chat → ícono de stickers → <b>Crear sticker</b> → elegí el video → tocá <b>🔊</b> y dejá el sonido original.</div>
 
     <!-- ================= EDITAR (opcional) ================= -->
-    <details class="editar">
+    <details class="editar" hidden>
+      <div class="row"><button class="btn" id="btnRandom" type="button">🎲 Random</button><button class="btn" id="btnFrito" type="button">🍟 Frito</button></div>
       <summary>✏️ Editar (opcional): sonido, efectos, texto</summary>
 
       <div class="sub">Cambiar el sonido</div>
@@ -501,7 +504,7 @@ const S = {
   visual: null,        // {type:'image'|'video'|'frames', el?, frames?, total?}
   audio: null,
   start: 0, dur: 3, vol: 1,
-  fit: 'contain', bg: '#0B141A', fx: 'rebote', borde: true, text: '', textPos: 'bottom',
+  fit: 'cover', bg: '#0B141A', fx: 'none', borde: false, conAudio: true, text: '', textPos: 'bottom',
   zoom: 1, panX: 0, panY: 0, efecto: 'normal', frito: false,
 };
 
@@ -598,7 +601,7 @@ async function cargarArchivo(file, { soloAudio = false, nombreAudio, emojiAudio 
           video: soloAudio ? null : S.visual.el }, true);
         toast(soloAudio ? '¡Audio listo! Recortalo abajo 👇' : '¡Video listo! Usamos su mismo audio 🎬');
       } else {
-        toast(soloAudio ? 'Ese archivo no tiene audio 😕' : 'Video listo (no tiene sonido, elegí uno en el paso 2)');
+        if (soloAudio) toast('Ese archivo no tiene audio 😕'); else { quitarSonido(); toast('Video listo (no tiene sonido)'); }
       }
       return;
     }
@@ -617,7 +620,7 @@ function usarVideo(url, crossOrigin) {
     if (crossOrigin) v.crossOrigin = 'anonymous';
     v.muted = true; v.loop = true; v.playsInline = true;
     v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
-    v.onloadeddata = () => { limpiarVisual(); S.visual = { type: 'video', el: v }; v.play().catch(() => {}); res(); };
+    v.onloadeddata = () => { limpiarVisual(); S.visual = { type: 'video', el: v }; S.fit = 'cover'; S.start = 0; S.dur = 0; v.play().catch(() => {}); actualizarRecorte(); res(); };
     v.onerror = () => rej(new Error('video'));
     v.src = url; $('#holder').appendChild(v); v.load();
   });
@@ -625,7 +628,7 @@ function usarVideo(url, crossOrigin) {
 function usarImagen(url) {
   return new Promise((res, rej) => {
     const img = new Image();
-    img.onload = () => { limpiarVisual(); $('#holder').appendChild(img); S.visual = { type: 'image', el: img }; res(); };
+    img.onload = () => { limpiarVisual(); $('#holder').appendChild(img); S.visual = { type: 'image', el: img }; S.fit = 'contain'; actualizarRecorte(); res(); };
     img.onerror = () => rej(new Error('img'));
     img.src = url;
   });
@@ -668,7 +671,7 @@ async function usarGif(buf) {
   }
   ponerFrames(frames);
 }
-function ponerFrames(frames) { limpiarVisual(); S.visual = { type: 'frames', frames, total: frames.reduce((a, f) => a + f.d, 0) }; }
+function ponerFrames(frames) { limpiarVisual(); S.visual = { type: 'frames', frames, total: frames.reduce((a, f) => a + f.d, 0) }; S.fit = 'contain'; actualizarRecorte(); }
 
 // ---------- GIPHY ----------
 function giphyKey() { return CONFIG.GIPHY_API_KEY || lsGet('cts-giphy') || ''; }
@@ -1062,7 +1065,7 @@ async function elegirSonido(id, boton, silencio) {
   }
   if (!silencio) reproducir();
 }
-function quitarSonido() { detener(); S.audio = null; $('#trim').hidden = true; renderSonidos(); actualizarBadge(); }
+function quitarSonido() { detener(); S.audio = null; renderSonidos(); actualizarRecorte(); }
 $('#quitarSonido').addEventListener('click', quitarSonido);
 
 // ---------- subir archivo de audio (o video para sacarle el audio) ----------
@@ -1129,19 +1132,41 @@ function dibujarOnda(pos) {
   });
   if (pos != null) { wctx.fillStyle = '#FAFAFA'; wctx.fillRect(pos / D * cW - 2, 0, 4, cH); }
 }
-function sincronizado() { return S.audio?.video && S.visual?.type === 'video' && S.visual.el === S.audio.video; }
+// El video arranca en el mismo punto que el recorte (si es su propio audio, o si no hay audio)
+function sincronizado() { return S.visual?.type === 'video' && (!S.audio || S.audio.video === S.visual.el); }
+// Largo total de lo que se recorta: el audio si hay, si no el video
+function largoFuente() {
+  if (S.audio) return S.audio.buffer.duration;
+  if (S.visual?.type === 'video') return S.visual.el.duration || 0;
+  return 0;
+}
 function actualizarRecorte() {
-  const s = S.audio; if (!s) { $('#trim').hidden = true; actualizarBadge(); return; }
+  if (!S.visual && !S.audio) { $('#trim').hidden = true; actualizarBadge(); return; }
   $('#trim').hidden = false;
-  const D = s.buffer.duration, maxDur = Math.min(CONFIG.DURACION_MAX, D);
-  S.dur = Math.min(S.dur, maxDur); S.start = Math.min(Math.max(0, S.start), Math.max(0, D - S.dur));
+  const D = largoFuente(), maxDur = D ? Math.min(CONFIG.DURACION_MAX, D) : CONFIG.DURACION_MAX;
+  S.dur = Math.min(S.dur || maxDur, maxDur); S.start = Math.min(Math.max(0, S.start), Math.max(0, D - S.dur));
   const rD = $('#rDur'); rD.min = Math.min(0.5, maxDur); rD.max = maxDur.toFixed(2); rD.value = S.dur;
+  const mueve = D - S.dur > 0.05;
+  $('#filaInicio').hidden = !mueve;
+  const rI = $('#rInicio'); rI.max = Math.max(0.01, D - S.dur).toFixed(2); rI.value = S.start;
+  $('#oInicio').textContent = S.start.toFixed(1) + ' s';
   $('#oDur').textContent = S.dur.toFixed(1) + ' s';
+  $('#oRango').textContent = `${S.start.toFixed(1)} – ${(S.start + S.dur).toFixed(1)} s`;
+  $('#wave').hidden = !S.audio;
+  $('#segAudio').hidden = !S.audio;
   actualizarBadge(); dibujarOnda();
 }
-function actualizarBadge() { $('#durLabel').textContent = S.audio ? S.dur.toFixed(1) + 's' : 'sin sonido'; }
+function actualizarBadge() { $('#durLabel').textContent = S.audio && S.conAudio ? S.dur.toFixed(1) + 's' : 'sin audio'; }
 $('#rDur').addEventListener('input', e => { S.dur = +e.target.value; actualizarRecorte(); });
 $('#rDur').addEventListener('change', reproducir);
+$('#rInicio').addEventListener('input', e => { S.start = +e.target.value; actualizarRecorte(); });
+$('#rInicio').addEventListener('change', reproducir);
+$('#segAudio').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.conAudio = b.dataset.a === '1';
+  document.querySelectorAll('#segAudio button').forEach(x => x.classList.toggle('on', x === b));
+  actualizarBadge(); if (S.conAudio) reproducir(); else detener();
+});
 $('#rVol').addEventListener('input', e => { S.vol = +e.target.value; $('#oVol').textContent = Math.round(S.vol * 100) + '%'; if (ganancia) ganancia.gain.value = S.vol; });
 function ondaEnPunto(e) {
   const s = S.audio; if (!s) return;
@@ -1200,7 +1225,7 @@ let fuente = null, ganancia = null, inicioAudio = 0, eqTimer, turnoPlay = 0;
 function detener() { turnoPlay++; try { fuente && fuente.stop(); } catch {} fuente = null; $('#eq').classList.remove('playing'); }
 async function reproducir() {
   detener(); reiniciarPreview();
-  if (!S.audio) return;
+  if (!S.audio || !S.conAudio) return;
   const c = getCtx(); c.resume();
   const turno = turnoPlay;
   const bf = await bufferFinal();
@@ -1382,7 +1407,7 @@ async function crear() {
   const formato = elegirFormato();
   if (formato === null || !preview.captureStream) { toast('Este navegador no puede crear videos. Probá con Safari o Chrome actualizados.'); return; }
   if (!S.visual) { toast('Primero elegí una imagen o video en el paso 1'); return; }
-  if (!S.audio) toast('Ojo: el sticker va sin sonido');
+  if (!S.audio || !S.conAudio) toast('El sticker va sin audio');
   const c = getCtx(); await c.resume();
   detener();
 
@@ -1391,7 +1416,7 @@ async function crear() {
   $('#bar').hidden = false; $('#result').hidden = true;
   $('#estado').textContent = 'No cierres ni cambies de pestaña mientras se crea.';
   const barra = $('#bar div');
-  const dur = S.audio ? S.dur : Math.min(3, CONFIG.DURACION_MAX);
+  const dur = S.dur || Math.min(3, CONFIG.DURACION_MAX);
 
   if (S.visual.type === 'video') {
     const ve = S.visual.el; ve.pause();
@@ -1402,15 +1427,16 @@ async function crear() {
 
   const dest = c.createMediaStreamDestination();
   const vStream = preview.captureStream(30);
-  const stream = new MediaStream([...vStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const conSonido = !!(S.audio && S.conAudio);
+  const stream = new MediaStream([...vStream.getVideoTracks(), ...(conSonido ? dest.stream.getAudioTracks() : [])]);
   const opts = { videoBitsPerSecond: 2_500_000, audioBitsPerSecond: 128_000 };
-  if (formato) opts.mimeType = formato;
+  if (formato) opts.mimeType = conSonido ? formato : formato.split(';')[0];
   let rec; try { rec = new MediaRecorder(stream, opts); } catch { rec = new MediaRecorder(stream); }
   const partes = []; rec.ondataavailable = e => e.data.size && partes.push(e.data);
   const terminado = new Promise(r => rec.onstop = r);
 
   let src = null, bf = null;
-  if (S.audio) {
+  if (S.audio && S.conAudio) {
     bf = await bufferFinal();
     src = c.createBufferSource(); src.buffer = bf.buf;
     const g = c.createGain(); g.gain.value = S.vol; src.connect(g); g.connect(dest); g.connect(c.destination);
